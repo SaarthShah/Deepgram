@@ -1,15 +1,11 @@
-# Importing Necessary Packages
-
 from deepgram import Deepgram
-
 import asyncio
 from dotenv import dotenv_values
-from pvrecorder import PvRecorder
 import pyaudio
 import time
 import json
-import wave
-
+import base64
+import numpy as np
 
 # Setting up the Deepgram API Key
 access_code = dotenv_values(".env")
@@ -19,7 +15,7 @@ print(access_code['DEEPGRAM_ACCESS_CODE'])
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
-CHUNK = 1024
+CHUNK = 3200
 
 current_timestamp = time.time()
 target_timestamp = current_timestamp + 10
@@ -37,40 +33,33 @@ audio_stream = pyaudio.PyAudio().open(
 # WebSocket connection function
 async def connect_and_stream_audio():
     try:
-      deepgramLive = await deepgram.transcription.live({ 'punctuate': True, 'interim_results': False, 'language': 'en-US' })
+        deepgramLive = await deepgram.transcription.live({'punctuate': True, 'interim_results': False, 'language': 'en-US', 'encoding': 'linear16'})
     except Exception as e:
-      print(f'Could not open socket: {e}')
-      return
-    
+        print(f'Could not open socket: {e}')
+        return
+
     deepgramLive.registerHandler(deepgramLive.event.CLOSE, lambda c: print(f'Connection closed with code {c}.'))
     # Listen for any transcripts received from Deepgram and write them to the console
     deepgramLive.registerHandler(deepgramLive.event.TRANSCRIPT_RECEIVED, print)
     print('WebSocket connection established')
-    
-    # Continuously stream audio data to Deepgram
-    try:
-      while True:
-        deepgramLive.send(
-          json.dumps({
-                'type': 'KeepAlive'
-            })
-        )   
-        audio_data = audio_stream.read(CHUNK)
-        # print(audio_data)
-        # deepgramLive.send(audio_data)
-        with wave.open('fullaudio.wav', 'wb') as wav_file:
-          wav_file.setparams((CHANNELS, 2, RATE, CHUNK, "NONE", "NONE"))
-          wav_file.writeframes(audio_data)
-          # Read the WAV file as binary data
-        with open('fullaudio.wav', 'rb') as file:
-          binary_data = file.read()
-          # Send the binary data to deepgramLive
-          deepgramLive.send(binary_data)
-          # print('sent')
-    except KeyboardInterrupt:
-      pass
 
-    await deepgramLive.finish()
+    try:
+        while True:
+            await asyncio.sleep(0.1)
+            audio_data = audio_stream.read(CHUNK)
+            audio_data_linear16 = (np.frombuffer(audio_data, dtype=np.int16) * 32767).astype(np.int16)
+            audio_data_linear16 = base64.b64encode(audio_data_linear16)
+            # print(audio_data_linear16)
+            deepgramLive.send(audio_data_linear16)
+
+            # deepgramLive.send(json.dumps({'type': 'KeepAlive'}))
+
+    except KeyboardInterrupt:
+        pass
+
+    # await deepgramLive.finish()
+    audio_stream.stop_stream()
+    audio_stream.close()
     print(time.time() - current_timestamp)
 
 # Run the WebSocket connection and audio streaming
